@@ -8,10 +8,13 @@
   * ===================
   *
   * 设备地址: 0x01
-  * 寄存器映射:
+  *
+  * 保持寄存器映射:
   * - 0x0000: LED模式控制 (0=停止, 1=右移, 2=左移)
   * - 0x0001: LED值控制
-  * - 0x0010-0x0017: 单独LED控制 (0=熄灭, 1=点亮)
+  *
+  * 线圈映射 (05功能码控制):
+  * - 0x0010-0x0017: 单独LED控制 (0x0000=熄灭, 0xFF00=点亮)
   *   * 0x0010: LED0控制
   *   * 0x0011: LED1控制
   *   * 0x0012: LED2控制
@@ -21,31 +24,31 @@
   *   * 0x0016: LED6控制
   *   * 0x0017: LED7控制
   *
-  * 命令示例（使用Python生成器自动生成CRC）:
+  * 命令示例:
   *
-  * 1. 启动右移模式 (mode_1#):
-  *    命令: echo -ne '\x01\x06\x00\x00\x00\x01\x48\x0A' > /dev/ttyUSB0
+  * 1. 启动右移模式:
+  *    命令: 01 06 00 00 00 01 48 0A
   *
-  * 2. 启动左移模式 (mode_2#):
-  *    命令: echo -ne '\x01\x06\x00\x00\x00\x02\x08\x0B' > /dev/ttyUSB0
+  * 2. 启动左移模式:
+  *    命令: 01 06 00 00 00 02 08 0B
   *
-  * 3. 停止模式 (stop#):
-  *    命令: echo -ne '\x01\x06\x00\x00\x00\x00\xC9\x0A' > /dev/ttyUSB0
+  * 3. 停止模式:
+  *    命令: 01 06 00 00 00 00 C9 0A
   *
-  * 4. 单独控制LED0点亮:
-  *    命令: echo -ne '\x01\x06\x00\x10\x00\x01\x80\x0A' > /dev/ttyUSB0
+  * 4. 单独控制LED0点亮 (05功能码):
+  *    命令: 01 05 00 10 FF 00 8C 3A
   *
-  * 5. 单独控制LED0熄灭:
-  *    命令: echo -ne '\x01\x06\x00\x10\x00\x00\xC1\xCA' > /dev/ttyUSB0
+  * 5. 单独控制LED0熄灭 (05功能码):
+  *    命令: 01 05 00 10 00 00 CD CA
   *
-  * 6. 单独控制LED7点亮:
-  *    命令: echo -ne '\x01\x06\x00\x17\x00\x01\x50\x0A' > /dev/ttyUSB0
+  * 6. 单独控制LED7点亮 (05功能码):
+  *    命令: 01 05 00 17 FF 00 5C 3A
   *
   * 7. 读取LED0状态:
-  *    命令: echo -ne '\x01\x03\x00\x10\x00\x01\x84\x0A' > /dev/ttyUSB0
+  *    命令: 01 03 00 10 00 01 84 0A
   *
   * 8. 读取所有LED状态:
-  *    命令: echo -ne '\x01\x03\x00\x10\x00\x08\xC5\xCE' > /dev/ttyUSB0
+  *    命令: 01 03 00 10 00 08 C5 CE
   *
   ******************************************************************************
   * @attention
@@ -99,7 +102,9 @@ uint8_t dataBuf[128] = {0};
 #define MODBUS_BUFFER_SIZE       256     // 接收/发送缓冲区大小
 
 /* Modbus功能码定义 */
+#define MODBUS_READ_COILS                0x01  // 读线圈状态
 #define MODBUS_READ_HOLDING_REGISTERS    0x03  // 读保持寄存器
+#define MODBUS_WRITE_SINGLE_COIL         0x05  // 写单个线圈
 #define MODBUS_WRITE_SINGLE_REGISTER     0x06  // 写单个寄存器
 #define MODBUS_WRITE_MULTIPLE_REGISTERS   0x10  // 写多个寄存器
 
@@ -143,6 +148,7 @@ void SystemClock_Config(void);
 uint16_t modbus_crc16(uint8_t *data, uint16_t length);
 void modbus_process_frame(uint8_t *rxBuffer, uint16_t length);
 void modbus_send_response(uint8_t function_code, uint16_t register_address, uint16_t register_value, uint8_t is_single);
+void modbus_send_coil_response(uint8_t function_code, uint16_t coil_address, uint16_t coil_value);
 void modbus_send_read_response(uint16_t register_address, uint16_t register_count);
 void modbus_send_led_read_response(uint16_t register_address, uint16_t start_index, uint16_t register_count);
 void modbus_send_exception(uint8_t function_code, uint8_t exception_code);
@@ -257,6 +263,15 @@ void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
     }
 
     switch (function_code) {
+        case MODBUS_WRITE_SINGLE_COIL:
+            /* 单个线圈写响应：回显地址和值 */
+            modbusTxBuffer[2] = (register_address >> 8) & 0xFF;
+            modbusTxBuffer[3] = register_address & 0xFF;
+            modbusTxBuffer[4] = (register_value >> 8) & 0xFF;
+            modbusTxBuffer[5] = register_value & 0xFF;
+            response_length = 8;
+            break;
+
         case MODBUS_WRITE_SINGLE_REGISTER:
             /* 写单个寄存器：地址(2) + 功能码(1) + 寄存器地址(2) + 寄存器值(2) + CRC(2) */
             if (length == 8) {
@@ -397,6 +412,58 @@ void modbus_send_response(uint8_t function_code, uint16_t register_address, uint
     response_length = 2;
 
     switch (function_code) {
+        case MODBUS_WRITE_SINGLE_COIL:
+            /* 写单个线圈：地址(1) + 功能码(1) + 线圈地址(2) + 线圈值(2) + CRC(2) */
+            if (length == 8) {
+                register_address = (rxBuffer[2] << 8) | rxBuffer[3];
+                register_value = (rxBuffer[4] << 8) | rxBuffer[5];
+
+                if (register_address >= LED0_REGISTER && register_address <= LED7_REGISTER) {
+                    /* 单独控制LED灯 */
+                    uint8_t led_index = register_address - LED0_REGISTER;
+                    GPIO_PinState pin_state = (register_value == 0xFF00) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+
+                    switch (led_index) {
+                        case 0:
+                            HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, pin_state);
+                            ledStatusRegisters[0] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 1:
+                            HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, pin_state);
+                            ledStatusRegisters[1] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 2:
+                            HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, pin_state);
+                            ledStatusRegisters[2] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 3:
+                            HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, pin_state);
+                            ledStatusRegisters[3] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 4:
+                            HAL_GPIO_WritePin(LED4_GPIO_Port, LED4_Pin, pin_state);
+                            ledStatusRegisters[4] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 5:
+                            HAL_GPIO_WritePin(LED5_GPIO_Port, LED5_Pin, pin_state);
+                            ledStatusRegisters[5] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 6:
+                            HAL_GPIO_WritePin(LED6_GPIO_Port, LED6_Pin, pin_state);
+                            ledStatusRegisters[6] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 7:
+                            HAL_GPIO_WritePin(LED7_GPIO_Port, LED7_Pin, pin_state);
+                            ledStatusRegisters[7] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                    }
+
+                    /* 发送确认回复 */
+                    modbus_send_coil_response(function_code, register_address, register_value);
+                }
+            }
+            break;
+
         case MODBUS_WRITE_SINGLE_REGISTER:
             /* 单个寄存器写响应：回显地址和值 */
             modbusTxBuffer[2] = (register_address >> 8) & 0xFF;
@@ -486,6 +553,34 @@ void modbus_send_led_read_response(uint16_t register_address, uint16_t start_ind
 
     /* 通过串口发送响应 */
     HAL_UART_Transmit(&huart1, modbusTxBuffer, 5 + byte_count, 100);
+}
+
+/**
+  * @brief 发送Modbus写线圈响应
+  * @param function_code 功能码
+  * @param coil_address 线圈地址
+  * @param coil_value 线圈值
+  * @note 响应格式与请求格式相同，用于确认写操作成功
+  */
+void modbus_send_coil_response(uint8_t function_code, uint16_t coil_address, uint16_t coil_value)
+{
+    uint16_t crc;
+
+    /* 构建响应帧头 */
+    modbusTxBuffer[0] = MODBUS_DEVICE_ADDRESS;
+    modbusTxBuffer[1] = function_code;
+    modbusTxBuffer[2] = (coil_address >> 8) & 0xFF;
+    modbusTxBuffer[3] = coil_address & 0xFF;
+    modbusTxBuffer[4] = (coil_value >> 8) & 0xFF;
+    modbusTxBuffer[5] = coil_value & 0xFF;
+
+    /* 计算并添加CRC */
+    crc = modbus_crc16(modbusTxBuffer, 6);
+    modbusTxBuffer[6] = crc & 0xFF;
+    modbusTxBuffer[7] = (crc >> 8) & 0xFF;
+
+    /* 通过串口发送响应 */
+    HAL_UART_Transmit(&huart1, modbusTxBuffer, 8, 100);
 }
 
 /**
