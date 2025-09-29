@@ -1,0 +1,26 @@
+--cpu Cortex-M3
+"experment4_usart_waterflow_led\startup_stm32f103xe.o"
+"experment4_usart_waterflow_led\main.o"
+"experment4_usart_waterflow_led\gpio.o"
+"experment4_usart_waterflow_led\usart.o"
+"experment4_usart_waterflow_led\stm32f1xx_it.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_msp.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_gpio_ex.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_tim.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_tim_ex.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_uart.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_rcc.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_rcc_ex.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_gpio.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_dma.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_cortex.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_pwr.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_flash.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_flash_ex.o"
+"experment4_usart_waterflow_led\stm32f1xx_hal_exti.o"
+"experment4_usart_waterflow_led\system_stm32f1xx.o"
+--library_type=microlib --strict --scatter "experment4_USART_WaterFlow_LED\experment4_USART_WaterFlow_LED.sct"
+--summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list "experment4_USART_WaterFlow_LED.map" -o experment4_USART_WaterFlow_LED\experment4_USART_WaterFlow_LED.axf
