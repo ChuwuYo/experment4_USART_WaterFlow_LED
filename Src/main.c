@@ -11,6 +11,15 @@
   * 寄存器映射:
   * - 0x0000: LED模式控制 (0=停止, 1=右移, 2=左移)
   * - 0x0001: LED值控制
+  * - 0x0010-0x0017: 单独LED控制 (0=熄灭, 1=点亮)
+  *   * 0x0010: LED0控制
+  *   * 0x0011: LED1控制
+  *   * 0x0012: LED2控制
+  *   * 0x0013: LED3控制
+  *   * 0x0014: LED4控制
+  *   * 0x0015: LED5控制
+  *   * 0x0016: LED6控制
+  *   * 0x0017: LED7控制
   *
   * 命令示例（使用Python生成器自动生成CRC）:
   *
@@ -23,8 +32,20 @@
   * 3. 停止模式 (stop#):
   *    命令: echo -ne '\x01\x06\x00\x00\x00\x00\xC9\x0A' > /dev/ttyUSB0
   *
-  * 4. 读取当前状态:
-  *    命令: echo -ne '\x01\x03\x00\x00\x00\x01\x84\x0A' > /dev/ttyUSB0
+  * 4. 单独控制LED0点亮:
+  *    命令: echo -ne '\x01\x06\x00\x10\x00\x01\x80\x0A' > /dev/ttyUSB0
+  *
+  * 5. 单独控制LED0熄灭:
+  *    命令: echo -ne '\x01\x06\x00\x10\x00\x00\xC1\xCA' > /dev/ttyUSB0
+  *
+  * 6. 单独控制LED7点亮:
+  *    命令: echo -ne '\x01\x06\x00\x17\x00\x01\x50\x0A' > /dev/ttyUSB0
+  *
+  * 7. 读取LED0状态:
+  *    命令: echo -ne '\x01\x03\x00\x10\x00\x01\x84\x0A' > /dev/ttyUSB0
+  *
+  * 8. 读取所有LED状态:
+  *    命令: echo -ne '\x01\x03\x00\x10\x00\x08\xC5\xCE' > /dev/ttyUSB0
   *
   ******************************************************************************
   * @attention
@@ -86,6 +107,16 @@ uint8_t dataBuf[128] = {0};
 #define LED_MODE_REGISTER   0x0000  // LED模式控制寄存器
 #define LED_VALUE_REGISTER  0x0001  // LED值控制寄存器
 
+/* 单独LED控制寄存器映射 */
+#define LED0_REGISTER       0x0010  // LED0控制寄存器 (0=熄灭, 1=点亮)
+#define LED1_REGISTER       0x0011  // LED1控制寄存器 (0=熄灭, 1=点亮)
+#define LED2_REGISTER       0x0012  // LED2控制寄存器 (0=熄灭, 1=点亮)
+#define LED3_REGISTER       0x0013  // LED3控制寄存器 (0=熄灭, 1=点亮)
+#define LED4_REGISTER       0x0014  // LED4控制寄存器 (0=熄灭, 1=点亮)
+#define LED5_REGISTER       0x0015  // LED5控制寄存器 (0=熄灭, 1=点亮)
+#define LED6_REGISTER       0x0016  // LED6控制寄存器 (0=熄灭, 1=点亮)
+#define LED7_REGISTER       0x0017  // LED7控制寄存器 (0=熄灭, 1=点亮)
+
 /* Modbus通信缓冲区 */
 uint8_t modbusRxBuffer[MODBUS_BUFFER_SIZE];  // 接收缓冲区
 uint8_t modbusTxBuffer[MODBUS_BUFFER_SIZE];  // 发送缓冲区
@@ -94,6 +125,9 @@ uint8_t modbusRxComplete = 0;                // 接收完成标志
 
 /* Modbus保持寄存器数组 */
 uint16_t holdingRegisters[10] = {0};  // 保持10个寄存器供Modbus访问
+
+/* LED状态寄存器数组（用于读取操作） */
+uint16_t ledStatusRegisters[8] = {0};  // LED0-LED7状态寄存器
 
 /* LED控制变量 */
 int8_t ledMode = -1;      // LED模式：-1=未初始化，0=停止，1=右移，2=左移
@@ -110,6 +144,7 @@ uint16_t modbus_crc16(uint8_t *data, uint16_t length);
 void modbus_process_frame(uint8_t *rxBuffer, uint16_t length);
 void modbus_send_response(uint8_t function_code, uint16_t register_address, uint16_t register_value, uint8_t is_single);
 void modbus_send_read_response(uint16_t register_address, uint16_t register_count);
+void modbus_send_led_read_response(uint16_t register_address, uint16_t start_index, uint16_t register_count);
 void modbus_send_exception(uint8_t function_code, uint8_t exception_code);
 
 /* USER CODE END PFP */
@@ -228,7 +263,7 @@ void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
                 register_address = (rxBuffer[2] << 8) | rxBuffer[3];
                 register_value = (rxBuffer[4] << 8) | rxBuffer[5];
 
-                if (register_address < 10) {  /* 确保寄存器地址有效 */
+                if (register_address < 10) {  /* 原有的保持寄存器 */
                     holdingRegisters[register_address] = register_value;
 
                     /* 更新LED控制变量 */
@@ -236,6 +271,49 @@ void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
                         ledMode = (int8_t)register_value;
                     } else if (register_address == LED_VALUE_REGISTER) {
                         LED_value = (uint8_t)register_value;
+                    }
+
+                    /* 发送确认回复 */
+                    modbus_send_response(function_code, register_address, register_value, 1);
+                }
+                else if (register_address >= LED0_REGISTER && register_address <= LED7_REGISTER) {
+                    /* 单独控制LED灯 */
+                    uint8_t led_index = register_address - LED0_REGISTER;
+                    GPIO_PinState pin_state = (register_value == 1) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+
+                    switch (led_index) {
+                        case 0:
+                            HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, pin_state);
+                            ledStatusRegisters[0] = register_value;
+                            break;
+                        case 1:
+                            HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, pin_state);
+                            ledStatusRegisters[1] = register_value;
+                            break;
+                        case 2:
+                            HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, pin_state);
+                            ledStatusRegisters[2] = register_value;
+                            break;
+                        case 3:
+                            HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, pin_state);
+                            ledStatusRegisters[3] = register_value;
+                            break;
+                        case 4:
+                            HAL_GPIO_WritePin(LED4_GPIO_Port, LED4_Pin, pin_state);
+                            ledStatusRegisters[4] = register_value;
+                            break;
+                        case 5:
+                            HAL_GPIO_WritePin(LED5_GPIO_Port, LED5_Pin, pin_state);
+                            ledStatusRegisters[5] = register_value;
+                            break;
+                        case 6:
+                            HAL_GPIO_WritePin(LED6_GPIO_Port, LED6_Pin, pin_state);
+                            ledStatusRegisters[6] = register_value;
+                            break;
+                        case 7:
+                            HAL_GPIO_WritePin(LED7_GPIO_Port, LED7_Pin, pin_state);
+                            ledStatusRegisters[7] = register_value;
+                            break;
                     }
 
                     /* 发送确认回复 */
@@ -281,7 +359,14 @@ void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
                 register_count = (rxBuffer[4] << 8) | rxBuffer[5];
 
                 if (register_address < 10 && (register_address + register_count) <= 10) {
+                    /* 读取原有的保持寄存器 */
                     modbus_send_read_response(register_address, register_count);
+                }
+                else if (register_address >= LED0_REGISTER && register_address <= LED7_REGISTER) {
+                    /* 读取LED状态寄存器 */
+                    uint16_t start_index = register_address - LED0_REGISTER;
+                    uint16_t actual_count = (start_index + register_count > 8) ? (8 - start_index) : register_count;
+                    modbus_send_led_read_response(register_address, start_index, actual_count);
                 }
             }
             break;
@@ -372,11 +457,43 @@ void modbus_send_read_response(uint16_t register_address, uint16_t register_coun
 }
 
 /**
- * @brief 发送Modbus异常响应
- * @param function_code 功能码
- * @param exception_code 异常码
- * @note 异常响应格式：地址(1) + (功能码|0x80)(1) + 异常码(1) + CRC(2)
- */
+  * @brief 发送LED状态寄存器读取响应
+  * @param register_address Modbus寄存器地址
+  * @param start_index LED状态数组起始索引
+  * @param register_count 寄存器数量
+  * @note 响应格式：地址(1) + 功能码(1) + 字节数(1) + 数据(n) + CRC(2)
+  */
+void modbus_send_led_read_response(uint16_t register_address, uint16_t start_index, uint16_t register_count)
+{
+    uint16_t crc;
+    uint8_t byte_count = register_count * 2;
+
+    /* 构建响应帧头 */
+    modbusTxBuffer[0] = MODBUS_DEVICE_ADDRESS;
+    modbusTxBuffer[1] = MODBUS_READ_HOLDING_REGISTERS;
+    modbusTxBuffer[2] = byte_count;
+
+    /* 复制LED状态数据（大端序） */
+    for (uint16_t i = 0; i < register_count; i++) {
+        modbusTxBuffer[3 + i * 2] = (ledStatusRegisters[start_index + i] >> 8) & 0xFF;
+        modbusTxBuffer[4 + i * 2] = ledStatusRegisters[start_index + i] & 0xFF;
+    }
+
+    /* 计算并添加CRC */
+    crc = modbus_crc16(modbusTxBuffer, 3 + byte_count);
+    modbusTxBuffer[3 + byte_count] = crc & 0xFF;
+    modbusTxBuffer[4 + byte_count] = (crc >> 8) & 0xFF;
+
+    /* 通过串口发送响应 */
+    HAL_UART_Transmit(&huart1, modbusTxBuffer, 5 + byte_count, 100);
+}
+
+/**
+  * @brief 发送Modbus异常响应
+  * @param function_code 功能码
+  * @param exception_code 异常码
+  * @note 异常响应格式：地址(1) + (功能码|0x80)(1) + 异常码(1) + CRC(2)
+  */
 void modbus_send_exception(uint8_t function_code, uint8_t exception_code)
 {
     uint16_t crc;
