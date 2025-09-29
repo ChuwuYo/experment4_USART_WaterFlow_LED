@@ -15,14 +15,14 @@
   *
   * 线圈映射 (05功能码控制):
   * - 0x0010-0x0017: 单独LED控制 (0x0000=熄灭, 0xFF00=点亮)
-  *   * 0x0010: LED0控制
-  *   * 0x0011: LED1控制
-  *   * 0x0012: LED2控制
-  *   * 0x0013: LED3控制
-  *   * 0x0014: LED4控制
-  *   * 0x0015: LED5控制
-  *   * 0x0016: LED6控制
-  *   * 0x0017: LED7控制
+  *   * 0x0010: LED1控制 (GPIO0)
+  *   * 0x0011: LED2控制 (GPIO1)
+  *   * 0x0012: LED3控制 (GPIO2)
+  *   * 0x0013: LED4控制 (GPIO3)
+  *   * 0x0014: LED5控制 (GPIO4)
+  *   * 0x0015: LED6控制 (GPIO5)
+  *   * 0x0016: LED7控制 (GPIO6)
+  *   * 0x0017: LED8控制 (GPIO7)
   *
   * 命令示例:
   *
@@ -35,16 +35,16 @@
   * 3. 停止模式:
   *    命令: 01 06 00 00 00 00 C9 0A
   *
-  * 4. 单独控制LED0点亮 (05功能码):
+  * 4. 单独控制LED1点亮 (05功能码):
   *    命令: 01 05 00 10 FF 00 8C 3A
   *
-  * 5. 单独控制LED0熄灭 (05功能码):
+  * 5. 单独控制LED1熄灭 (05功能码):
   *    命令: 01 05 00 10 00 00 CD CA
   *
-  * 6. 单独控制LED7点亮 (05功能码):
+  * 6. 单独控制LED8点亮 (05功能码):
   *    命令: 01 05 00 17 FF 00 5C 3A
   *
-  * 7. 读取LED0状态:
+  * 7. 读取LED1状态:
   *    命令: 01 03 00 10 00 01 84 0A
   *
   * 8. 读取所有LED状态:
@@ -112,15 +112,15 @@ uint8_t dataBuf[128] = {0};
 #define LED_MODE_REGISTER   0x0000  // LED模式控制寄存器
 #define LED_VALUE_REGISTER  0x0001  // LED值控制寄存器
 
-/* 单独LED控制寄存器映射 */
-#define LED0_REGISTER       0x0010  // LED0控制寄存器 (0=熄灭, 1=点亮)
-#define LED1_REGISTER       0x0011  // LED1控制寄存器 (0=熄灭, 1=点亮)
-#define LED2_REGISTER       0x0012  // LED2控制寄存器 (0=熄灭, 1=点亮)
-#define LED3_REGISTER       0x0013  // LED3控制寄存器 (0=熄灭, 1=点亮)
-#define LED4_REGISTER       0x0014  // LED4控制寄存器 (0=熄灭, 1=点亮)
-#define LED5_REGISTER       0x0015  // LED5控制寄存器 (0=熄灭, 1=点亮)
-#define LED6_REGISTER       0x0016  // LED6控制寄存器 (0=熄灭, 1=点亮)
-#define LED7_REGISTER       0x0017  // LED7控制寄存器 (0=熄灭, 1=点亮)
+/* 单独LED控制寄存器映射 (LED1-LED8对应GPIO0-GPIO7) */
+#define LED1_REGISTER       0x0010  // LED1控制寄存器 (0=熄灭, 1=点亮) - GPIO0
+#define LED2_REGISTER       0x0011  // LED2控制寄存器 (0=熄灭, 1=点亮) - GPIO1
+#define LED3_REGISTER       0x0012  // LED3控制寄存器 (0=熄灭, 1=点亮) - GPIO2
+#define LED4_REGISTER       0x0013  // LED4控制寄存器 (0=熄灭, 1=点亮) - GPIO3
+#define LED5_REGISTER       0x0014  // LED5控制寄存器 (0=熄灭, 1=点亮) - GPIO4
+#define LED6_REGISTER       0x0015  // LED6控制寄存器 (0=熄灭, 1=点亮) - GPIO5
+#define LED7_REGISTER       0x0016  // LED7控制寄存器 (0=熄灭, 1=点亮) - GPIO6
+#define LED8_REGISTER       0x0017  // LED8控制寄存器 (0=熄灭, 1=点亮) - GPIO7
 
 /* Modbus通信缓冲区 */
 uint8_t modbusRxBuffer[MODBUS_BUFFER_SIZE];  // 接收缓冲区
@@ -263,6 +263,58 @@ void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
     }
 
     switch (function_code) {
+        case MODBUS_WRITE_SINGLE_COIL:
+            /* 写单个线圈：地址(1) + 功能码(1) + 线圈地址(2) + 线圈值(2) + CRC(2) */
+            if (length == 8) {
+                register_address = (rxBuffer[2] << 8) | rxBuffer[3];
+                register_value = (rxBuffer[4] << 8) | rxBuffer[5];
+
+                if (register_address >= LED1_REGISTER && register_address <= LED8_REGISTER) {
+                    /* 单独控制LED灯 */
+                    uint8_t led_index = register_address - LED1_REGISTER;
+                    GPIO_PinState pin_state = (register_value == 0xFF00) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+
+                    switch (led_index) {
+                        case 0:  // LED1 - GPIO0
+                            HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, pin_state);
+                            ledStatusRegisters[0] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 1:  // LED2 - GPIO1
+                            HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, pin_state);
+                            ledStatusRegisters[1] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 2:  // LED3 - GPIO2
+                            HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, pin_state);
+                            ledStatusRegisters[2] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 3:  // LED4 - GPIO3
+                            HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, pin_state);
+                            ledStatusRegisters[3] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 4:  // LED5 - GPIO4
+                            HAL_GPIO_WritePin(LED4_GPIO_Port, LED4_Pin, pin_state);
+                            ledStatusRegisters[4] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 5:  // LED6 - GPIO5
+                            HAL_GPIO_WritePin(LED5_GPIO_Port, LED5_Pin, pin_state);
+                            ledStatusRegisters[5] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 6:  // LED7 - GPIO6
+                            HAL_GPIO_WritePin(LED6_GPIO_Port, LED6_Pin, pin_state);
+                            ledStatusRegisters[6] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                        case 7:  // LED8 - GPIO7
+                            HAL_GPIO_WritePin(LED7_GPIO_Port, LED7_Pin, pin_state);
+                            ledStatusRegisters[7] = (register_value == 0xFF00) ? 1 : 0;
+                            break;
+                    }
+
+                    /* 发送确认回复 */
+                    modbus_send_coil_response(function_code, register_address, register_value);
+                }
+            }
+            break;
+
         case MODBUS_WRITE_SINGLE_REGISTER:
             /* 写单个寄存器：地址(2) + 功能码(1) + 寄存器地址(2) + 寄存器值(2) + CRC(2) */
             if (length == 8) {
@@ -282,41 +334,41 @@ void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
                     /* 发送确认回复 */
                     modbus_send_response(function_code, register_address, register_value, 1);
                 }
-                else if (register_address >= LED0_REGISTER && register_address <= LED7_REGISTER) {
+                else if (register_address >= LED1_REGISTER && register_address <= LED8_REGISTER) {
                     /* 单独控制LED灯 */
-                    uint8_t led_index = register_address - LED0_REGISTER;
+                    uint8_t led_index = register_address - LED1_REGISTER;
                     GPIO_PinState pin_state = (register_value == 1) ? GPIO_PIN_SET : GPIO_PIN_RESET;
 
                     switch (led_index) {
-                        case 0:
+                        case 0:  // LED1 - GPIO0
                             HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, pin_state);
                             ledStatusRegisters[0] = register_value;
                             break;
-                        case 1:
+                        case 1:  // LED2 - GPIO1
                             HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, pin_state);
                             ledStatusRegisters[1] = register_value;
                             break;
-                        case 2:
+                        case 2:  // LED3 - GPIO2
                             HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, pin_state);
                             ledStatusRegisters[2] = register_value;
                             break;
-                        case 3:
+                        case 3:  // LED4 - GPIO3
                             HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, pin_state);
                             ledStatusRegisters[3] = register_value;
                             break;
-                        case 4:
+                        case 4:  // LED5 - GPIO4
                             HAL_GPIO_WritePin(LED4_GPIO_Port, LED4_Pin, pin_state);
                             ledStatusRegisters[4] = register_value;
                             break;
-                        case 5:
+                        case 5:  // LED6 - GPIO5
                             HAL_GPIO_WritePin(LED5_GPIO_Port, LED5_Pin, pin_state);
                             ledStatusRegisters[5] = register_value;
                             break;
-                        case 6:
+                        case 6:  // LED7 - GPIO6
                             HAL_GPIO_WritePin(LED6_GPIO_Port, LED6_Pin, pin_state);
                             ledStatusRegisters[6] = register_value;
                             break;
-                        case 7:
+                        case 7:  // LED8 - GPIO7
                             HAL_GPIO_WritePin(LED7_GPIO_Port, LED7_Pin, pin_state);
                             ledStatusRegisters[7] = register_value;
                             break;
@@ -368,9 +420,9 @@ void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
                     /* 读取原有的保持寄存器 */
                     modbus_send_read_response(register_address, register_count);
                 }
-                else if (register_address >= LED0_REGISTER && register_address <= LED7_REGISTER) {
+                else if (register_address >= LED1_REGISTER && register_address <= LED8_REGISTER) {
                     /* 读取LED状态寄存器 */
-                    uint16_t start_index = register_address - LED0_REGISTER;
+                    uint16_t start_index = register_address - LED1_REGISTER;
                     uint16_t actual_count = (start_index + register_count > 8) ? (8 - start_index) : register_count;
                     modbus_send_led_read_response(register_address, start_index, actual_count);
                 }
