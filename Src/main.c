@@ -2,7 +2,40 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Main program body
+  * @brief          : Main program body with Modbus RTU protocol
+  *
+  * Modbus RTU命令说明:
+  * ===================
+  *
+  * 设备地址: 0x01
+  * 寄存器映射:
+  * - 0x0000: LED模式控制 (0=停止, 1=右移, 2=左移)
+  * - 0x0001: LED值控制
+  *
+  * 命令示例（使用Python生成器自动生成CRC）:
+  *
+  * 1. 启动右移模式 (mode_1#):
+  *    python3 modbus_command_generator.py 1 mode1
+  *    命令: echo -ne '\x01\x06\x00\x00\x00\x01\x48\x0A' > /dev/ttyUSB0
+  *
+  * 2. 启动左移模式 (mode_2#):
+  *    python3 modbus_command_generator.py 1 mode2
+  *    命令: echo -ne '\x01\x06\x00\x00\x00\x02\x08\x0B' > /dev/ttyUSB0
+  *
+  * 3. 停止模式 (stop#):
+  *    python3 modbus_command_generator.py 1 stop
+  *    命令: echo -ne '\x01\x06\x00\x00\x00\x00\xC9\x0A' > /dev/ttyUSB0
+  *
+  * 4. 读取当前状态:
+  *    python3 modbus_command_generator.py 1 read
+  *    命令: echo -ne '\x01\x03\x00\x00\x00\x01\x84\x0A' > /dev/ttyUSB0
+  *
+  * 或者使用Python生成器:
+  * python3 modbus_command_generator.py 1 mode1    # 右移模式
+  * python3 modbus_command_generator.py 1 mode2    # 左移模式
+  * python3 modbus_command_generator.py 1 stop     # 停止模式
+  * python3 modbus_command_generator.py 1 read     # 读取状态
+  *
   ******************************************************************************
   * @attention
   *
@@ -25,6 +58,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "stdint.h"
 
 /* USER CODE END Includes */
 
@@ -80,6 +114,13 @@ uint8_t LED_value = 0xFD;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+
+// Modbus函数声明
+uint16_t modbus_crc16(uint8_t *data, uint16_t length);
+void modbus_process_frame(uint8_t *rxBuffer, uint16_t length);
+void modbus_send_response(uint8_t function_code, uint16_t register_address, uint16_t register_value, uint8_t is_single);
+void modbus_send_read_response(uint16_t register_address, uint16_t register_count);
+void modbus_send_exception(uint8_t function_code, uint8_t exception_code);
 
 /* USER CODE END PFP */
 
