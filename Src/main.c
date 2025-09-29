@@ -48,11 +48,33 @@
 /* USER CODE BEGIN PV */
 #include "string.h"
 uint8_t dataBuf[128]={0};
-const char stringMode1[8]="mode_1#";
-const char stringMode2[8]="mode_2#";
-const char stringStop[8]="stop#";
-int8_t ledMode=-1;
-uint8_t LED_value=0xFD;
+
+// Modbus相关定义
+#define MODBUS_DEVICE_ADDRESS  0x01  // 从设备地址
+#define MODBUS_BUFFER_SIZE     256   // Modbus缓冲区大小
+
+// Modbus功能码
+#define MODBUS_READ_HOLDING_REGISTERS  0x03
+#define MODBUS_WRITE_SINGLE_REGISTER   0x06
+#define MODBUS_WRITE_MULTIPLE_REGISTERS 0x10
+
+// Modbus寄存器地址
+#define LED_MODE_REGISTER      0x0000  // LED模式控制寄存器
+#define LED_VALUE_REGISTER     0x0001  // LED值寄存器
+
+// Modbus数据缓冲区
+uint8_t modbusRxBuffer[MODBUS_BUFFER_SIZE];
+uint8_t modbusTxBuffer[MODBUS_BUFFER_SIZE];
+uint16_t modbusRxCount = 0;
+uint8_t modbusRxComplete = 0;
+
+// Modbus保持寄存器
+uint16_t holdingRegisters[10] = {0};  // 保持10个寄存器
+
+// LED控制变量
+int8_t ledMode = -1;
+uint8_t LED_value = 0xFD;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -65,31 +87,254 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN 0 */
 uint8_t cror(uint8_t numbers,uint8_t bits)
 {
-	uint8_t right=numbers>>bits;
-	uint8_t left=numbers<<(8-bits);
-	uint8_t temp=left|right;
-	return temp;
+ 	uint8_t right=numbers>>bits;
+ 	uint8_t left=numbers<<(8-bits);
+ 	uint8_t temp=left|right;
+ 	return temp;
 }
 
 uint8_t crol(uint8_t numbers,uint8_t bits)
 {
-	uint8_t right=numbers<<bits;
-	uint8_t left=numbers>>(8-bits);
-	uint8_t temp=left|right;
-	return temp;
-}
-void LED_State_Set(uint8_t numbers)
-{
-	HAL_GPIO_WritePin(LED0_GPIO_Port,LED0_Pin,((numbers&0x01)>>0)?GPIO_PIN_SET:GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED1_GPIO_Port,LED1_Pin,((numbers&0x02)>>1)?GPIO_PIN_SET:GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED2_GPIO_Port,LED2_Pin,((numbers&0x04)>>2)?GPIO_PIN_SET:GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED3_GPIO_Port,LED3_Pin,((numbers&0x08)>>3)?GPIO_PIN_SET:GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED4_GPIO_Port,LED4_Pin,((numbers&0x10)>>4)?GPIO_PIN_SET:GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED5_GPIO_Port,LED5_Pin,((numbers&0x20)>>5)?GPIO_PIN_SET:GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED6_GPIO_Port,LED6_Pin,((numbers&0x40)>>6)?GPIO_PIN_SET:GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED7_GPIO_Port,LED7_Pin,((numbers&0x80)>>7)?GPIO_PIN_SET:GPIO_PIN_RESET);
+ 	uint8_t right=numbers<<bits;
+ 	uint8_t left=numbers>>(8-bits);
+ 	uint8_t temp=left|right;
+ 	return temp;
 }
 
+void LED_State_Set(uint8_t numbers)
+{
+ 	HAL_GPIO_WritePin(LED0_GPIO_Port,LED0_Pin,((numbers&0x01)>>0)?GPIO_PIN_SET:GPIO_PIN_RESET);
+ 	HAL_GPIO_WritePin(LED1_GPIO_Port,LED1_Pin,((numbers&0x02)>>1)?GPIO_PIN_SET:GPIO_PIN_RESET);
+ 	HAL_GPIO_WritePin(LED2_GPIO_Port,LED2_Pin,((numbers&0x04)>>2)?GPIO_PIN_SET:GPIO_PIN_RESET);
+ 	HAL_GPIO_WritePin(LED3_GPIO_Port,LED3_Pin,((numbers&0x08)>>3)?GPIO_PIN_SET:GPIO_PIN_RESET);
+ 	HAL_GPIO_WritePin(LED4_GPIO_Port,LED4_Pin,((numbers&0x10)>>4)?GPIO_PIN_SET:GPIO_PIN_RESET);
+ 	HAL_GPIO_WritePin(LED5_GPIO_Port,LED5_Pin,((numbers&0x20)>>5)?GPIO_PIN_SET:GPIO_PIN_RESET);
+ 	HAL_GPIO_WritePin(LED6_GPIO_Port,LED6_Pin,((numbers&0x40)>>6)?GPIO_PIN_SET:GPIO_PIN_RESET);
+ 	HAL_GPIO_WritePin(LED7_GPIO_Port,LED7_Pin,((numbers&0x80)>>7)?GPIO_PIN_SET:GPIO_PIN_RESET);
+}
+
+/**
+ * @brief 计算Modbus CRC16校验码
+ * @param data 数据缓冲区
+ * @param length 数据长度
+ * @return CRC16校验码
+ */
+uint16_t modbus_crc16(uint8_t *data, uint16_t length)
+{
+    uint16_t crc = 0xFFFF;
+    uint16_t i, j;
+
+    for (i = 0; i < length; i++) {
+        crc ^= data[i];
+        for (j = 0; j < 8; j++) {
+            if (crc & 0x0001) {
+                crc >>= 1;
+                crc ^= 0xA001;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    return crc;
+}
+
+/**
+ * @brief 处理接收到的Modbus数据帧
+ * @param rxBuffer 接收缓冲区
+ * @param length 数据长度
+ */
+void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
+{
+    uint16_t crc_received, crc_calculated;
+    uint8_t device_address, function_code;
+    uint16_t register_address, register_value, register_count;
+
+    // 验证数据长度（最小帧长度：地址+功能码+CRC = 4字节）
+    if (length < 4) {
+        return;
+    }
+
+    // 验证CRC校验
+    crc_received = (rxBuffer[length-1] << 8) | rxBuffer[length-2];
+    crc_calculated = modbus_crc16(rxBuffer, length - 2);
+    if (crc_received != crc_calculated) {
+        return;  // CRC校验失败
+    }
+
+    // 解析Modbus帧
+    device_address = rxBuffer[0];
+    function_code = rxBuffer[1];
+
+    // 检查设备地址
+    if (device_address != MODBUS_DEVICE_ADDRESS) {
+        return;  // 不是本设备
+    }
+
+    switch (function_code) {
+        case MODBUS_WRITE_SINGLE_REGISTER:
+            // 写单个寄存器：地址(2) + 功能码(1) + 寄存器地址(2) + 寄存器值(2) + CRC(2)
+            if (length == 8) {
+                register_address = (rxBuffer[2] << 8) | rxBuffer[3];
+                register_value = (rxBuffer[4] << 8) | rxBuffer[5];
+
+                if (register_address < 10) {  // 确保寄存器地址有效
+                    holdingRegisters[register_address] = register_value;
+
+                    // 更新LED控制变量
+                    if (register_address == LED_MODE_REGISTER) {
+                        ledMode = (int8_t)register_value;
+                    } else if (register_address == LED_VALUE_REGISTER) {
+                        LED_value = (uint8_t)register_value;
+                    }
+
+                    // 发送确认回复
+                    modbus_send_response(function_code, register_address, register_value, 1);
+                }
+            }
+            break;
+
+        case MODBUS_WRITE_MULTIPLE_REGISTERS:
+            // 写多个寄存器：地址(1) + 功能码(1) + 起始地址(2) + 寄存器数量(2) + 字节数(1) + 数据(n) + CRC(2)
+            if (length >= 9) {
+                register_address = (rxBuffer[2] << 8) | rxBuffer[3];
+                register_count = (rxBuffer[4] << 8) | rxBuffer[5];
+                uint8_t byte_count = rxBuffer[6];
+
+                if (length == (9 + byte_count) && (byte_count == register_count * 2)) {
+                    // 写入寄存器值
+                    for (uint16_t i = 0; i < register_count && (register_address + i) < 10; i++) {
+                        holdingRegisters[register_address + i] =
+                            (rxBuffer[7 + i * 2] << 8) | rxBuffer[8 + i * 2];
+                    }
+
+                    // 更新LED控制变量
+                    if (register_address <= LED_MODE_REGISTER &&
+                        (register_address + register_count) > LED_MODE_REGISTER) {
+                        ledMode = (int8_t)holdingRegisters[LED_MODE_REGISTER];
+                    }
+                    if (register_address <= LED_VALUE_REGISTER &&
+                        (register_address + register_count) > LED_VALUE_REGISTER) {
+                        LED_value = (uint8_t)holdingRegisters[LED_VALUE_REGISTER];
+                    }
+
+                    // 发送确认回复
+                    modbus_send_response(function_code, register_address, register_count, 0);
+                }
+            }
+            break;
+
+        case MODBUS_READ_HOLDING_REGISTERS:
+            // 读保持寄存器：地址(1) + 功能码(1) + 起始地址(2) + 寄存器数量(2) + CRC(2)
+            if (length == 8) {
+                register_address = (rxBuffer[2] << 8) | rxBuffer[3];
+                register_count = (rxBuffer[4] << 8) | rxBuffer[5];
+
+                if (register_address < 10 && (register_address + register_count) <= 10) {
+                    modbus_send_read_response(register_address, register_count);
+                }
+            }
+            break;
+
+        default:
+            // 未知功能码，返回异常响应
+            modbus_send_exception(function_code, 0x01);  // 非法功能码
+            break;
+    }
+}
+
+/**
+ * @brief 发送Modbus响应
+ * @param function_code 功能码
+ * @param register_address 寄存器地址
+ * @param register_value 寄存器值或数量
+ * @param is_single 是否为单个寄存器写操作
+ */
+void modbus_send_response(uint8_t function_code, uint16_t register_address, uint16_t register_value, uint8_t is_single)
+{
+    uint16_t crc;
+    uint8_t response_length = 0;
+
+    modbusTxBuffer[0] = MODBUS_DEVICE_ADDRESS;
+    modbusTxBuffer[1] = function_code;
+    response_length = 2;
+
+    switch (function_code) {
+        case MODBUS_WRITE_SINGLE_REGISTER:
+            modbusTxBuffer[2] = (register_address >> 8) & 0xFF;
+            modbusTxBuffer[3] = register_address & 0xFF;
+            modbusTxBuffer[4] = (register_value >> 8) & 0xFF;
+            modbusTxBuffer[5] = register_value & 0xFF;
+            response_length = 8;
+            break;
+
+        case MODBUS_WRITE_MULTIPLE_REGISTERS:
+            modbusTxBuffer[2] = (register_address >> 8) & 0xFF;
+            modbusTxBuffer[3] = register_address & 0xFF;
+            modbusTxBuffer[4] = (register_value >> 8) & 0xFF;
+            modbusTxBuffer[5] = register_value & 0xFF;
+            response_length = 8;
+            break;
+    }
+
+    // 计算并添加CRC
+    crc = modbus_crc16(modbusTxBuffer, response_length);
+    modbusTxBuffer[response_length] = crc & 0xFF;
+    modbusTxBuffer[response_length + 1] = (crc >> 8) & 0xFF;
+
+    // 通过串口发送响应
+    HAL_UART_Transmit(&huart1, modbusTxBuffer, response_length + 2, 100);
+}
+
+/**
+ * @brief 发送读寄存器响应
+ * @param register_address 起始寄存器地址
+ * @param register_count 寄存器数量
+ */
+void modbus_send_read_response(uint16_t register_address, uint16_t register_count)
+{
+    uint16_t crc;
+    uint8_t byte_count = register_count * 2;
+
+    modbusTxBuffer[0] = MODBUS_DEVICE_ADDRESS;
+    modbusTxBuffer[1] = MODBUS_READ_HOLDING_REGISTERS;
+    modbusTxBuffer[2] = byte_count;
+
+    // 复制寄存器数据
+    for (uint16_t i = 0; i < register_count; i++) {
+        modbusTxBuffer[3 + i * 2] = (holdingRegisters[register_address + i] >> 8) & 0xFF;
+        modbusTxBuffer[4 + i * 2] = holdingRegisters[register_address + i] & 0xFF;
+    }
+
+    // 计算并添加CRC
+    crc = modbus_crc16(modbusTxBuffer, 3 + byte_count);
+    modbusTxBuffer[3 + byte_count] = crc & 0xFF;
+    modbusTxBuffer[4 + byte_count] = (crc >> 8) & 0xFF;
+
+    // 通过串口发送响应
+    HAL_UART_Transmit(&huart1, modbusTxBuffer, 5 + byte_count, 100);
+}
+
+/**
+ * @brief 发送Modbus异常响应
+ * @param function_code 功能码
+ * @param exception_code 异常码
+ */
+void modbus_send_exception(uint8_t function_code, uint8_t exception_code)
+{
+    uint16_t crc;
+
+    modbusTxBuffer[0] = MODBUS_DEVICE_ADDRESS;
+    modbusTxBuffer[1] = function_code | 0x80;  // 异常响应功能码
+    modbusTxBuffer[2] = exception_code;
+
+    // 计算并添加CRC
+    crc = modbus_crc16(modbusTxBuffer, 3);
+    modbusTxBuffer[3] = crc & 0xFF;
+    modbusTxBuffer[4] = (crc >> 8) & 0xFF;
+
+    // 通过串口发送异常响应
+    HAL_UART_Transmit(&huart1, modbusTxBuffer, 5, 100);
+}
 
 /* USER CODE END 0 */
 
@@ -133,51 +378,41 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-		//printf("hello world.\r\n");
+  //printf("hello world.\r\n");
     /* USER CODE END WHILE */
-		if(UART_RX_STATE_DEAL==uart1RxState)
-		{
-			if(strstr((const char*)uart1RxBuf,stringMode1)!=NULL)
-			{
-				printf("I'm in mode_1!\r\n");
-				ledMode=1;
-			}
-			else if(strstr((const char*)uart1RxBuf,stringMode2)!=NULL)
-			{
-				printf("I'm in mode_2!\r\n");
-				ledMode=2;
-			}
-			else if(strstr((const char*)uart1RxBuf,stringStop)!=NULL)
-			{
-				printf("I'm stop!\r\n");
-				ledMode=0;
-			}
-			__HAL_UART_ENABLE_IT(&huart1,UART_IT_RXNE);
-			
-			uart1RxState=UART_RX_STATE_READY;
-			uart1RxCounter=0;
-			memset(uart1RxBuf,0,UART1_RCV_MAX);			
-		}
-		switch(ledMode)
-		{
-			case 1:				
-				LED_State_Set(LED_value);
-				LED_value=cror(LED_value,1);
-				HAL_Delay(1000);
-				break;
-			case 2:				
-				LED_State_Set(LED_value);
-				LED_value=crol(LED_value,1);
-				HAL_Delay(1000);
-				break;
-			case 0:
-				LED_value=0xFF;
-				LED_State_Set(LED_value);	
-				LED_value=0xFD;			
-				break;
-			default:
-				break;
-		}
+  if(UART_RX_STATE_DEAL==uart1RxState)
+  {
+  	// 处理Modbus数据帧
+  	modbus_process_frame(uart1RxBuf, uart1RxCounter);
+
+  	__HAL_UART_ENABLE_IT(&huart1,UART_IT_RXNE);
+
+  	uart1RxState=UART_RX_STATE_READY;
+  	uart1RxCounter=0;
+  	memset(uart1RxBuf,0,UART1_RCV_MAX);
+  }
+
+  // LED控制逻辑保持不变
+  switch(ledMode)
+  {
+  	case 1:
+  		LED_State_Set(LED_value);
+  		LED_value=cror(LED_value,1);
+  		HAL_Delay(1000);
+  		break;
+  	case 2:
+  		LED_State_Set(LED_value);
+  		LED_value=crol(LED_value,1);
+  		HAL_Delay(1000);
+  		break;
+  	case 0:
+  		LED_value=0xFF;
+  		LED_State_Set(LED_value);
+  		LED_value=0xFD;
+  		break;
+  	default:
+  		break;
+  }
 
     /* USER CODE BEGIN 3 */
   }
