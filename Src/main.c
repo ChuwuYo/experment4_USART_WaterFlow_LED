@@ -263,15 +263,6 @@ void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
     }
 
     switch (function_code) {
-        case MODBUS_WRITE_SINGLE_COIL:
-            /* 单个线圈写响应：回显地址和值 */
-            modbusTxBuffer[2] = (register_address >> 8) & 0xFF;
-            modbusTxBuffer[3] = register_address & 0xFF;
-            modbusTxBuffer[4] = (register_value >> 8) & 0xFF;
-            modbusTxBuffer[5] = register_value & 0xFF;
-            response_length = 8;
-            break;
-
         case MODBUS_WRITE_SINGLE_REGISTER:
             /* 写单个寄存器：地址(2) + 功能码(1) + 寄存器地址(2) + 寄存器值(2) + CRC(2) */
             if (length == 8) {
