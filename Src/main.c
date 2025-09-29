@@ -403,57 +403,6 @@ void modbus_send_response(uint8_t function_code, uint16_t register_address, uint
     response_length = 2;
 
     switch (function_code) {
-        case MODBUS_WRITE_SINGLE_COIL:
-            /* 写单个线圈：地址(1) + 功能码(1) + 线圈地址(2) + 线圈值(2) + CRC(2) */
-            if (length == 8) {
-                register_address = (rxBuffer[2] << 8) | rxBuffer[3];
-                register_value = (rxBuffer[4] << 8) | rxBuffer[5];
-
-                if (register_address >= LED0_REGISTER && register_address <= LED7_REGISTER) {
-                    /* 单独控制LED灯 */
-                    uint8_t led_index = register_address - LED0_REGISTER;
-                    GPIO_PinState pin_state = (register_value == 0xFF00) ? GPIO_PIN_SET : GPIO_PIN_RESET;
-
-                    switch (led_index) {
-                        case 0:
-                            HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, pin_state);
-                            ledStatusRegisters[0] = (register_value == 0xFF00) ? 1 : 0;
-                            break;
-                        case 1:
-                            HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, pin_state);
-                            ledStatusRegisters[1] = (register_value == 0xFF00) ? 1 : 0;
-                            break;
-                        case 2:
-                            HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, pin_state);
-                            ledStatusRegisters[2] = (register_value == 0xFF00) ? 1 : 0;
-                            break;
-                        case 3:
-                            HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, pin_state);
-                            ledStatusRegisters[3] = (register_value == 0xFF00) ? 1 : 0;
-                            break;
-                        case 4:
-                            HAL_GPIO_WritePin(LED4_GPIO_Port, LED4_Pin, pin_state);
-                            ledStatusRegisters[4] = (register_value == 0xFF00) ? 1 : 0;
-                            break;
-                        case 5:
-                            HAL_GPIO_WritePin(LED5_GPIO_Port, LED5_Pin, pin_state);
-                            ledStatusRegisters[5] = (register_value == 0xFF00) ? 1 : 0;
-                            break;
-                        case 6:
-                            HAL_GPIO_WritePin(LED6_GPIO_Port, LED6_Pin, pin_state);
-                            ledStatusRegisters[6] = (register_value == 0xFF00) ? 1 : 0;
-                            break;
-                        case 7:
-                            HAL_GPIO_WritePin(LED7_GPIO_Port, LED7_Pin, pin_state);
-                            ledStatusRegisters[7] = (register_value == 0xFF00) ? 1 : 0;
-                            break;
-                    }
-
-                    /* 发送确认回复 */
-                    modbus_send_coil_response(function_code, register_address, register_value);
-                }
-            }
-            break;
 
         case MODBUS_WRITE_SINGLE_REGISTER:
             /* 单个寄存器写响应：回显地址和值 */
