@@ -20,6 +20,7 @@
   *   * 0x0008: LED8控制 (GPIO7)
   *
   * 支持的功能码:
+  * - 01 (0x01): 读线圈状态
   * - 03 (0x03): 读保持寄存器
   * - 05 (0x05): 写单个线圈
   * - 06 (0x06): 写单个寄存器
@@ -27,7 +28,8 @@
   *
   * 命令示例:
   *
-  * 1. 启动右移模式 (FC06):
+  * 1. 启动右移模式 (FC06 - 写单个寄存器):
+  *    命令格式: 设备地址(01) + 功能码(06) + 寄存器地址高字节(00) + 寄存器地址低字节(00) + 数据高字节(00) + 数据低字节(01) + CRC低字节(48) + CRC高字节(0A)
   *    命令: 01 06 00 00 00 01 48 0A
   *
   * 2. 启动左移模式 (FC06):
@@ -36,25 +38,46 @@
   * 3. 停止模式 (FC06):
   *    命令: 01 06 00 00 00 00 C9 0A
   *
-  * 4. 单独控制LED1点亮 (FC05):
+  * 4. 单独控制LED1点亮 (FC05 - 写单个线圈):
+  *    命令格式: 设备地址(01) + 功能码(05) + 线圈地址高字节(00) + 线圈地址低字节(01) + 状态高字节(FF) + 状态低字节(00) + CRC低字节(9C) + CRC高字节(3A)
   *    命令: 01 05 00 01 FF 00 9C 3A
+  *    说明: FF00表示点亮，0000表示熄灭
   *
   * 5. 单独控制LED1熄灭 (FC05):
   *    命令: 01 05 00 01 00 00 CD CA
   *
-  * 6. 同时控制8个LED (FC15, 亮-灭-亮-灭...):
-  *    数据 0x55 (二进制 01010101) -> LED1,3,5,7亮, 其余灭
+  * 6. 同时控制8个LED (FC15 - 写多个线圈, 亮-灭-亮-灭...):
+  *    命令格式: 设备地址(01) + 功能码(0F) + 起始地址高字节(00) + 起始地址低字节(01) + 线圈数量高字节(00) + 线圈数量低字节(08) + 字节数(01) + 数据(55) + CRC低字节(7B) + CRC高字节(5D)
   *    命令: 01 0F 00 01 00 08 01 55 7B 5D
+  *    说明: 数据0x55(二进制01010101) -> LED1,3,5,7亮, 其余灭
   *
   * 7. 同时点亮所有LED (FC15):
-  *    数据 0xFF (二进制 11111111) -> 全部点亮
   *    命令: 01 0F 00 01 00 08 01 FF 7A 15
+  *    说明: 数据0xFF(二进制11111111) -> 全部点亮
   *
-  * 8. 查询单个LED状态 (FC03, 以LED1为例):
+  * 8. 查询单个LED状态 (FC03 - 读保持寄存器, 以LED1为例):
+  *    命令格式: 设备地址(01) + 功能码(03) + 起始地址高字节(00) + 起始地址低字节(01) + 寄存器数量高字节(00) + 寄存器数量低字节(01) + CRC低字节(90) + CRC高字节(0A)
   *    命令: 01 03 00 01 00 01 90 0A
+  *    响应格式: 设备地址(01) + 功能码(03) + 字节数(02) + 寄存器值高字节(00) + 寄存器值低字节(00/01) + CRC低字节 + CRC高字节
   *
   * 9. 查询所有8个LED的状态 (FC03):
   *    命令: 01 03 00 01 00 08 45 CE
+  *
+  * 10. 读取单个线圈状态 (FC01 - 读线圈状态, 以LED1为例):
+  *     命令格式: 设备地址(01) + 功能码(01) + 起始地址高字节(00) + 起始地址低字节(01) + 线圈数量高字节(00) + 线圈数量低字节(01) + CRC低字节(90) + CRC高字节(0C)
+  *     命令: 01 01 00 01 00 01 90 0C
+  *     响应格式: 设备地址(01) + 功能码(01) + 字节数(01) + 状态值(00/01) + CRC低字节 + CRC高字节
+  *     读取单个线圈状态 (FC01, 以LED8为例):
+  *     命令: 01 01 00 08 00 01 3D CF
+  * 
+  * 
+  * 11. 读取多个线圈状态 (FC01, 读取LED1-LED8):
+  *     命令: 01 01 00 01 00 08 BD CC
+  *     响应格式: 设备地址(01) + 功能码(01) + 字节数(01) + 状态值(8位打包) + CRC低字节 + CRC高字节
+  *     状态值示例: 0x55(二进制01010101) 表示LED1,3,5,7亮，LED2,4,6,8灭
+  *
+  * 12. 读取部分线圈状态 (FC01, 读取LED1-LED4):
+  *     命令: 01 01 00 01 00 04 BD CD
   *
   ******************************************************************************
   */
@@ -83,6 +106,7 @@
 #define MODBUS_BUFFER_SIZE       256     // 接收/发送缓冲区大小
 
 /* Modbus功能码定义 */
+#define MODBUS_READ_COILS                0x01  // 读线圈状态
 #define MODBUS_READ_HOLDING_REGISTERS    0x03  // 读保持寄存器
 #define MODBUS_WRITE_SINGLE_COIL         0x05  // 写单个线圈
 #define MODBUS_WRITE_SINGLE_REGISTER     0x06  // 写单个寄存器
@@ -156,6 +180,14 @@ void modbus_send_write_response(uint8_t function_code, uint16_t address, uint16_
  * @note 响应格式：设备地址 + 功能码(0x03) + 字节数 + 寄存器数据 + CRC低字节 + CRC高字节
  */
 void modbus_send_read_response(uint16_t register_address, uint16_t register_count);
+
+/**
+ * @brief 发送Modbus读线圈状态响应
+ * @param coil_address 线圈起始地址
+ * @param coil_count 读取线圈数量
+ * @note 响应格式：设备地址 + 功能码(0x01) + 字节数 + 线圈状态数据（按位打包） + CRC低字节 + CRC高字节
+ */
+void modbus_send_read_coils_response(uint16_t coil_address, uint16_t coil_count);
 
 /**
  * @brief 发送Modbus异常响应
@@ -279,113 +311,133 @@ uint16_t modbus_crc16(uint8_t *data, uint16_t length)
  * @brief 处理接收到的Modbus RTU数据帧
  * @param rxBuffer 接收数据缓冲区指针，包含完整的Modbus RTU数据帧
  * @param length 接收数据长度（字节数）
- * @note 支持的功能码：读保持寄存器(0x03)、写单个线圈(0x05)、写单个寄存器(0x06)、写多个线圈(0x0F)
+ * @note 支持的功能码：读线圈状态(0x01)、读保持寄存器(0x03)、写单个线圈(0x05)、写单个寄存器(0x06)、写多个线圈(0x0F)
  * @note 自动验证CRC校验、设备地址和功能码，处理完成后发送相应响应
  * @warning 输入数据长度至少应为4字节（设备地址+功能码+数据+CRC），否则直接返回
  */
 void modbus_process_frame(uint8_t *rxBuffer, uint16_t length)
 {
-    if (length < 4) return;
+    if (length < 4) return;  // 数据长度不足，忽略该帧
 
+    // 提取接收到的CRC校验码（低字节在前，高字节在后）
     uint16_t crc_received = (rxBuffer[length - 1] << 8) | rxBuffer[length - 2];
+    // 计算CRC校验码（不包括CRC字段本身）
     uint16_t crc_calculated = modbus_crc16(rxBuffer, length - 2);
 
-    if (crc_received != crc_calculated) return;
-    if (rxBuffer[0] != MODBUS_DEVICE_ADDRESS) return;
+    if (crc_received != crc_calculated) return;  // CRC校验失败，忽略该帧
+    if (rxBuffer[0] != MODBUS_DEVICE_ADDRESS) return;  // 设备地址不匹配，忽略该帧
 
+    // 解析功能码和起始地址
     uint8_t function_code = rxBuffer[1];
     uint16_t address = (rxBuffer[2] << 8) | rxBuffer[3];
 
     switch (function_code) {
-        case MODBUS_WRITE_SINGLE_COIL: {
-            if (length != 8) { modbus_send_exception(function_code, 0x03); return; }
-            uint16_t value = (rxBuffer[4] << 8) | rxBuffer[5];
-            if (address >= LED1_COIL_ADDRESS && address <= LED8_COIL_ADDRESS) {
-                uint8_t led_index = address - LED1_COIL_ADDRESS;
-                uint16_t led_state = (value == 0xFF00) ? 1 : 0;
-
-                // 1. 控制物理LED
-                GPIO_PinState pin_state = (led_state == 1) ? GPIO_PIN_RESET : GPIO_PIN_SET;
-                HAL_GPIO_WritePin((GPIO_TypeDef*)LED_GPIO_PORTS[led_index], LED_GPIO_PINS[led_index], pin_state);
-                
-                // 2. 更新用于快速读取的状态数组
-                ledStatusRegisters[led_index] = led_state;
-                
-                // --- FIX: 新增的关键代码 ---
-                // 3. 同步更新 holdingRegisters 数组，以便FC03可以查询
-                holdingRegisters[address] = led_state; 
-                // --- 修正结束 ---
-
-                modbus_send_write_response(function_code, address, value);
+        case MODBUS_READ_COILS: {  // 读线圈状态 (0x01)
+            if (length != 8) { modbus_send_exception(function_code, 0x03); return; }  // 数据长度错误
+            uint16_t count = (rxBuffer[4] << 8) | rxBuffer[5];  // 读取线圈数量
+            // 验证线圈地址范围（LED1-LED8: 0x0001-0x0008）
+            if (address >= LED1_COIL_ADDRESS && address <= LED8_COIL_ADDRESS &&
+                (address + count) <= (LED8_COIL_ADDRESS + 1) && count > 0) {
+                modbus_send_read_coils_response(address, count);  // 发送读线圈响应
             } else {
-                modbus_send_exception(function_code, 0x02);
+                modbus_send_exception(function_code, 0x02);  // 非法地址异常
             }
             break;
         }
 
-        case MODBUS_WRITE_MULTIPLE_COILS: {
-            uint16_t coil_count = (rxBuffer[4] << 8) | rxBuffer[5];
-            uint8_t byte_count = rxBuffer[6];
-            
-            if (length != (9 + byte_count) || byte_count != (coil_count + 7) / 8) {
-                modbus_send_exception(function_code, 0x03); return;
-            }
-            if (address < LED1_COIL_ADDRESS || (address + coil_count) > (LED8_COIL_ADDRESS + 1)) {
-                modbus_send_exception(function_code, 0x02); return;
-            }
-            
-            uint8_t* data_bytes = &rxBuffer[7];
-            for (uint16_t i = 0; i < coil_count; ++i) {
-                uint16_t current_coil_addr = address + i;
-                uint8_t led_index = current_coil_addr - LED1_COIL_ADDRESS;
-                uint8_t coil_state_bit = (data_bytes[i / 8] >> (i % 8)) & 0x01;
-                
-                GPIO_PinState pin_state = (coil_state_bit == 1) ? GPIO_PIN_RESET : GPIO_PIN_SET;
-                
+        case MODBUS_WRITE_SINGLE_COIL: {  // 写单个线圈 (0x05)
+            if (length != 8) { modbus_send_exception(function_code, 0x03); return; }  // 数据长度错误
+            uint16_t value = (rxBuffer[4] << 8) | rxBuffer[5];  // 线圈状态值
+            if (address >= LED1_COIL_ADDRESS && address <= LED8_COIL_ADDRESS) {  // 地址范围检查
+                uint8_t led_index = address - LED1_COIL_ADDRESS;  // 计算LED索引
+                uint16_t led_state = (value == 0xFF00) ? 1 : 0;  // 转换线圈状态（FF00=亮，0000=灭）
+
+                // 1. 控制物理LED硬件
+                GPIO_PinState pin_state = (led_state == 1) ? GPIO_PIN_RESET : GPIO_PIN_SET;
                 HAL_GPIO_WritePin((GPIO_TypeDef*)LED_GPIO_PORTS[led_index], LED_GPIO_PINS[led_index], pin_state);
+
+                // 2. 更新用于快速读取的状态数组
+                ledStatusRegisters[led_index] = led_state;
+
+                // --- FIX: 新增的关键代码 ---
+                // 3. 同步更新 holdingRegisters 数组，以便FC03可以查询
+                holdingRegisters[address] = led_state;
+                // --- 修正结束 ---
+
+                modbus_send_write_response(function_code, address, value);  // 发送写响应
+            } else {
+                modbus_send_exception(function_code, 0x02);  // 非法地址异常
+            }
+            break;
+        }
+
+        case MODBUS_WRITE_MULTIPLE_COILS: {  // 写多个线圈 (0x0F)
+            uint16_t coil_count = (rxBuffer[4] << 8) | rxBuffer[5];  // 线圈数量
+            uint8_t byte_count = rxBuffer[6];  // 数据字节数
+
+            // 验证帧长度和字节数正确性
+            if (length != (9 + byte_count) || byte_count != (coil_count + 7) / 8) {
+                modbus_send_exception(function_code, 0x03); return;  // 非法数据值异常
+            }
+            // 验证地址范围
+            if (address < LED1_COIL_ADDRESS || (address + coil_count) > (LED8_COIL_ADDRESS + 1)) {
+                modbus_send_exception(function_code, 0x02); return;  // 非法地址异常
+            }
+
+            uint8_t* data_bytes = &rxBuffer[7];  // 数据字节指针
+            for (uint16_t i = 0; i < coil_count; ++i) {  // 遍历每个线圈
+                uint16_t current_coil_addr = address + i;  // 当前线圈地址
+                uint8_t led_index = current_coil_addr - LED1_COIL_ADDRESS;  // LED索引
+                // 从数据字节中提取对应位的状态
+                uint8_t coil_state_bit = (data_bytes[i / 8] >> (i % 8)) & 0x01;
+
+                // 控制物理LED硬件
+                GPIO_PinState pin_state = (coil_state_bit == 1) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+                HAL_GPIO_WritePin((GPIO_TypeDef*)LED_GPIO_PORTS[led_index], LED_GPIO_PINS[led_index], pin_state);
+                // 更新状态数组
                 ledStatusRegisters[led_index] = coil_state_bit;
-                
+
                 // --- FIX: 新增的关键代码 ---
                 // 同步更新 holdingRegisters 数组
                 holdingRegisters[current_coil_addr] = coil_state_bit;
                 // --- 修正结束 ---
             }
 
-            modbus_send_write_response(function_code, address, coil_count);
+            modbus_send_write_response(function_code, address, coil_count);  // 发送写响应
             break;
         }
 
-        case MODBUS_WRITE_SINGLE_REGISTER: {
-            if (length != 8) { modbus_send_exception(function_code, 0x03); return; }
-            uint16_t value = (rxBuffer[4] << 8) | rxBuffer[5];
-            if (address == LED_MODE_REGISTER) {
-                ledMode = (int8_t)value;
-                holdingRegisters[LED_MODE_REGISTER] = value;
-                modbus_send_write_response(function_code, address, value);
-            } else if (address == LED_VALUE_REGISTER) {
-                LED_value = (uint8_t)value;
-                holdingRegisters[LED_VALUE_REGISTER] = value;
-                modbus_send_write_response(function_code, address, value);
+        case MODBUS_WRITE_SINGLE_REGISTER: {  // 写单个寄存器 (0x06)
+            if (length != 8) { modbus_send_exception(function_code, 0x03); return; }  // 数据长度错误
+            uint16_t value = (rxBuffer[4] << 8) | rxBuffer[5];  // 寄存器值
+            if (address == LED_MODE_REGISTER) {  // LED模式寄存器
+                ledMode = (int8_t)value;  // 更新LED模式
+                holdingRegisters[LED_MODE_REGISTER] = value;  // 同步到保持寄存器
+                modbus_send_write_response(function_code, address, value);  // 发送写响应
+            } else if (address == LED_VALUE_REGISTER) {  // LED值寄存器
+                LED_value = (uint8_t)value;  // 更新LED值
+                holdingRegisters[LED_VALUE_REGISTER] = value;  // 同步到保持寄存器
+                modbus_send_write_response(function_code, address, value);  // 发送写响应
             } else {
-                modbus_send_exception(function_code, 0x02);
+                modbus_send_exception(function_code, 0x02);  // 非法地址异常
             }
             break;
         }
 
-        case MODBUS_READ_HOLDING_REGISTERS: {
-            if (length != 8) { modbus_send_exception(function_code, 0x03); return; }
-            uint16_t count = (rxBuffer[4] << 8) | rxBuffer[5];
+        case MODBUS_READ_HOLDING_REGISTERS: {  // 读保持寄存器 (0x03)
+            if (length != 8) { modbus_send_exception(function_code, 0x03); return; }  // 数据长度错误
+            uint16_t count = (rxBuffer[4] << 8) | rxBuffer[5];  // 读取寄存器数量
             // 注意：现在我们直接从 holdingRegisters 读取，地址范围可以更广
-            if (address < 10 && (address + count) <= 10) {
-                 modbus_send_read_response(address, count);
+            if (address < 10 && (address + count) <= 10) {  // 地址范围检查
+                 modbus_send_read_response(address, count);  // 发送读寄存器响应
             } else {
-                 modbus_send_exception(function_code, 0x02);
+                 modbus_send_exception(function_code, 0x02);  // 非法地址异常
             }
             break;
         }
 
-        default:
-            modbus_send_exception(function_code, 0x01);
+        default:  // 不支持的功能码
+            modbus_send_exception(function_code, 0x01);  // 不支持的功能码异常
             break;
     }
 }
@@ -451,6 +503,51 @@ void modbus_send_read_response(uint16_t register_address, uint16_t register_coun
 }
 
 /**
+ * @brief 发送Modbus读线圈状态响应
+ * @param coil_address 线圈起始地址
+ * @param coil_count 读取线圈数量
+ * @note 响应格式：设备地址(1) + 功能码(1) + 字节数(1) + 线圈状态数据(按位打包) + CRC低字节(1) + CRC高字节(1)
+ * @note 线圈状态按位打包：每8个线圈占用1字节，bit0对应第一个线圈
+ * @note 总长度：5 + 字节数 字节，超时时间：100ms
+ */
+void modbus_send_read_coils_response(uint16_t coil_address, uint16_t coil_count)
+{
+    // 计算需要的字节数（每8个线圈占1字节，向上取整）
+    uint8_t byte_count = (coil_count + 7) / 8;
+
+    // 构建响应帧头部
+    modbusTxBuffer[0] = MODBUS_DEVICE_ADDRESS;                    // 设备地址
+    modbusTxBuffer[1] = MODBUS_READ_COILS;                       // 功能码(0x01)
+    modbusTxBuffer[2] = byte_count;                              // 数据字节数
+
+    // 清空数据区域
+    memset(&modbusTxBuffer[3], 0, byte_count);
+
+    // 填充线圈状态数据（按位打包）
+    for (uint16_t i = 0; i < coil_count; i++) {
+        uint16_t current_coil = coil_address + i;
+        // 从ledStatusRegisters数组读取线圈状态
+        if (current_coil >= LED1_COIL_ADDRESS && current_coil <= LED8_COIL_ADDRESS) {
+            uint8_t led_index = current_coil - LED1_COIL_ADDRESS;
+            uint8_t coil_state = ledStatusRegisters[led_index];
+            
+            // 将线圈状态按位打包到字节中
+            if (coil_state) {
+                modbusTxBuffer[3 + (i / 8)] |= (1 << (i % 8));
+            }
+        }
+    }
+
+    // 计算CRC校验码（对前3字节 + 数据字节计算）
+    uint16_t crc = modbus_crc16(modbusTxBuffer, 3 + byte_count);
+    modbusTxBuffer[3 + byte_count] = crc & 0xFF;                // CRC低字节
+    modbusTxBuffer[4 + byte_count] = (crc >> 8) & 0xFF;        // CRC高字节
+
+    // 发送响应帧（5 + 数据字节数，100ms超时）
+    HAL_UART_Transmit(&huart1, modbusTxBuffer, 5 + byte_count, 100);
+}
+
+/**
  * @brief 发送Modbus异常响应
  * @param function_code 异常的功能码（最高位设置为1）
  * @param exception_code 异常代码（0x01=不支持的功能码，0x02=非法地址，0x03=非法数据值）
@@ -483,7 +580,7 @@ void modbus_send_exception(uint8_t function_code, uint8_t exception_code)
  * @brief 应用程序主函数 - Modbus RTU从机程序入口
  * @retval int 程序返回值（实际不会返回）
  * @note 实现基于STM32的Modbus RTU从机功能，支持LED控制和状态查询
- * @note 支持的功能码：0x03(读保持寄存器)、0x05(写单个线圈)、0x06(写单个寄存器)、0x0F(写多个线圈)
+ * @note 支持的功能码：0x01(读线圈状态)、0x03(读保持寄存器)、0x05(写单个线圈)、0x06(写单个寄存器)、0x0F(写多个线圈)
  */
 int main(void)
 {
